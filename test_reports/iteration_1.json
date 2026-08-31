@@ -1,0 +1,28 @@
+{
+  "summary": "Latency-sensitive first-finish testing of Spanish corporate portal. Backend: verified auth (admin/user/invalid), /auth/me, /apps role-scoping (admin=4, user=1), 403 on forbidden app, submission required-field validation with Spanish label, submit + list, admin CRUD (list/create/patch/delete), duplicate email 400, invalid role 422, self-delete 400, non-admin 403 on /api/admin/*. Frontend: admin login -> 4 app cards, clientes form submit shows in Registros tab, admin users page create+delete+edit dialog works, logout clears session (protected route redirects to /login), user login shows 1 card, no admin nav link, /admin/usuarios redirects to /portal.",
+  "tested_scope": ["backend", "frontend", "auth", "integration"],
+  "passed": [
+    "POST /api/auth/login admin returns token + user (role=admin, 4 allowed_apps)",
+    "POST /api/auth/login invalid -> 401",
+    "GET /api/auth/me no token -> 401; with token returns admin profile",
+    "GET /api/apps admin=4, user=1 (clientes)",
+    "GET /api/apps/productos as user -> 403; /api/apps/clientes returns 6 fields",
+    "POST /api/apps/clientes/submissions missing empresa -> 400 with Spanish label 'El campo \\'Empresa\\' es obligatorio'",
+    "POST valid submission returns 200 with id; GET returns user's own submissions",
+    "GET /api/admin/users as admin=3 users; as user -> 403",
+    "POST /api/admin/users duplicate -> 400; invalid role -> 422; valid create returns user id",
+    "PATCH /api/admin/users/{id} -> 200; DELETE -> 200; self-delete -> 400",
+    "Frontend admin login -> /portal, apps-grid shows 4 cards",
+    "clientes form submit shows in submissions-table, tab-lista works",
+    "Admin nav visible; create user via dialog (Radix Select in Spanish 'Usuario') increases rows from 4->5",
+    "Delete with AlertDialog confirm reduces rows 5->4; edit dialog opens and cancels cleanly",
+    "Logout returns to /login; visiting /portal redirects to /login",
+    "user@portal.com sees 1 card, no nav-admin-users; /admin/usuarios redirects to /portal"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true,
+  "notes": "Role Select uses Spanish labels (Administrador/Editor/Usuario) — automation must click Radix trigger and pick Spanish option. Admin's own delete button is disabled in UI, preventing self-delete at UI layer in addition to API guard."
+}

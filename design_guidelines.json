@@ -1,0 +1,115 @@
+{
+  "theme": "light and dark toggle",
+  "archetype": "Archetype 4: SWISS & HIGH-CONTRAST + Premium Corporate",
+  "typography": {
+    "headings": {
+      "font": "Work Sans",
+      "classes": "font-bold tracking-tight text-foreground",
+      "banned": ["Inter", "Roboto", "Open Sans", "Lato"]
+    },
+    "body": {
+      "font": "IBM Plex Sans",
+      "classes": "leading-relaxed text-foreground"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl",
+      "h2": "text-2xl sm:text-3xl",
+      "h3": "text-xl sm:text-2xl",
+      "body": "text-base",
+      "labels": "text-xs uppercase tracking-[0.2em]"
+    }
+  },
+  "colors": {
+    "light": {
+      "background": "0 0% 98%",
+      "foreground": "222 47% 11%",
+      "primary": "217 91% 60%",
+      "primary-foreground": "0 0% 100%",
+      "card": "0 0% 100%",
+      "border": "214 32% 91%",
+      "muted": "214 32% 96%"
+    },
+    "dark": {
+      "background": "222 47% 7%",
+      "foreground": "210 40% 98%",
+      "primary": "217 91% 60%",
+      "primary-foreground": "0 0% 100%",
+      "card": "222 47% 9%",
+      "border": "217 33% 17%",
+      "muted": "217 33% 13%"
+    },
+    "rules": [
+      "Use tinted greys, never pure #000000 or #808080. Tint with blue/navy for this corporate theme.",
+      "Hover states must be explicitly set and have a lighter hue of the active state.",
+      "No full-screen gradients. Use solid colors with crisp borders."
+    ]
+  },
+  "visual_enhancers": {
+    "surfaces": "Grid Borders for Dashboards (expose the skeleton). 1px subtle borders (border-border). For overlays (headers/dropdowns), use 'Crystal Glass' (backdrop-blur-xl bg-background/80 with 1px delicate inner stroke). NEVER use transparent backgrounds for dropdowns/overlays.",
+    "shadows": "Subtle ambient shadows on cards (shadow-sm). Focus on crisp edges rather than heavy drop shadows.",
+    "borders": "Nested radii: child <= parent; concentric. Prefer rounded-md for a sharp corporate look."
+  },
+  "grids_and_layouts": {
+    "dashboard_layout": "Mode B (High Density Grid). Base Grid: grid-cols-1 md:grid-cols-3 lg:grid-cols-4. Tight gaps (gap-4 or gap-6).",
+    "navigation": "Fixed left sidebar (240-280px) for desktop navigation. Hamburger menu for mobile only. The sidebar should have a distinct but subtle background separation (e.g. bg-muted/50).",
+    "alignment": "Left-align dense content, forms, and paragraphs. Right-align numbers in tables.",
+    "spacing": "Generous spacing around containers. Use p-6 or p-8 inside bordered cards."
+  },
+  "component_guidelines": {
+    "data_entry_forms": "Single-column flow only. Validate inline (on blur). Keep fields minimal. Show specific, actionable error messages directly under fields. Ensure CTAs are unmissable, full-width or distinctly large.",
+    "data_tables": "High density. Include pagination over infinite scroll. Left-align text, right-align numbers. Use specific Empty States (e.g., 'No hay registros' + Actionable CTA).",
+    "cards": "Flat background, 1px subtle border, no shadow by default. Hover on actionable cards: slight lift (-translate-y-1) and subtle shadow (shadow-md).",
+    "buttons": "Modern sharp or slightly rounded buttons (rounded-md) with interaction animations. Primary color should be strictly limited to main calls-to-action."
+  },
+  "motion_and_interactions": {
+    "required": [
+      "Hover states",
+      "Click/press states",
+      "Focus states with high contrast",
+      "Staggered entrance animations for lists"
+    ],
+    "rules": [
+      "NO transition: all. Use specific properties (e.g., transition-colors, transition-transform).",
+      "Respect prefers-reduced-motion."
+    ]
+  },
+  "accessibility": {
+    "contrast": "Minimum 4.5:1 for normal text, 3:1 for large text. Use text shadow when text overlays images.",
+    "interactive": "Hit areas must be at least 44x44px for mobile targets. Focus states must have HIGHER contrast.",
+    "testing": "All interactive elements MUST include data-testid attribute (e.g., data-testid='login-form-submit-button', data-testid='admin-create-user-btn')."
+  },
+  "media_and_assets": {
+    "icons": "Use @phosphor-icons/react for a high-end, clean corporate aesthetic.",
+    "image_urls": {
+      "login_background": {
+        "url": "https://images.unsplash.com/photo-1462556791646-c201b8241a94?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMG1vZGVybiUyMGFyY2hpdGVjdHVyZSUyMGdsYXNzfGVufDB8fHx8MTc4ODE3Nzc0M3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract modern glass architecture for a professional corporate login page background."
+      },
+      "dashboard_accent": {
+        "url": "https://images.unsplash.com/photo-1575318633968-0383e7d07ca0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzZ8MHwxfHNlYXJjaHwyfHxtaW5pbWFsaXN0JTIwb2ZmaWNlJTIwZGVzayUyMGNsZWFufGVufDB8fHx8MTc4ODE3Nzc0M3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Minimalist office desk. Can be used for profile empty states, onboarding headers, or welcome banners."
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "CRITICAL: The entire UI MUST be written in Spanish (Español) as requested.",
+    "App structure: 1. Login Page -> 2. Central Portal/Dashboard (Shows available form apps as cards based on user role) -> 3. Form Apps / Admin Panel.",
+    "Roles: Admin, Editor, User. Admin gets a specific view to create users and assign application access.",
+    "Forms: Implement typical corporate data-entry forms (e.g., 'Formulario de Ingreso de Clientes', 'Reporte de Incidentes').",
+    "Tables: Display submitted forms in a high-density, paginated table view.",
+    "Ensure you install `@phosphor-icons/react`.",
+    "Use Shadcn UI components for dropdowns, forms, and dialogs. Write raw Tailwind HTML for layouts.",
+    "Use `.js` or `.jsx` extensions for React files.",
+    "Use `sonner` for toast notifications."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur) for overlays ONLY, not for data cards.",
+    "You MUST NOT apply universal transition (transition: all). Add transitions for specific interactive elements excluding transforms.",
+    "You MUST NOT center align the app container. Do not add '.App { text-align: center; }'. This disrupts natural reading flow.",
+    "Always use modern button styles (pill-shaped or sharp) with interaction animations.",
+    "NEVER use AI assistant Emoji characters (🤖🧠💭💡) for icons. Use Phosphor Icons instead.",
+    "Prioritize using pre-existing components from src/components/ui.",
+    "Use 'sonner' for toast notifications."
+  ]
+}
