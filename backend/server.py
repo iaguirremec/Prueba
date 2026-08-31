@@ -94,6 +94,25 @@ APPS: List[Dict[str, Any]] = [
             {"name": "fecha_ingreso", "label": "Fecha de Ingreso", "type": "date", "required": True},
         ],
     },
+    {
+        "id": "reclamaciones",
+        "name": "Registro de Reclamaciones",
+        "description": "Reclamaciones.",
+        "icon": "ChatCircleDots",
+        "accent": "rose",
+        "fields": [
+            {"name": "numero", "label": "Número de Reclamación", "type": "text", "required": True},
+            {"name": "reclamante", "label": "Nombre del Reclamante", "type": "text", "required": True},
+            {"name": "email", "label": "Email de Contacto", "type": "email", "required": True},
+            {"name": "fecha_incidente", "label": "Fecha del Incidente", "type": "date", "required": True},
+            {"name": "categoria", "label": "Categoría", "type": "select", "required": True,
+             "options": ["Producto", "Servicio", "Facturación", "Atención al cliente", "Otro"]},
+            {"name": "prioridad", "label": "Prioridad", "type": "select", "required": True,
+             "options": ["Baja", "Media", "Alta", "Urgente"]},
+            {"name": "descripcion", "label": "Descripción de la Reclamación", "type": "textarea", "required": True},
+            {"name": "resolucion_esperada", "label": "Resolución Esperada", "type": "textarea", "required": False},
+        ],
+    },
 ]
 
 APPS_BY_ID = {a["id"]: a for a in APPS}
@@ -431,10 +450,22 @@ async def on_startup():
                 "email": email,
                 "name": name,
                 "role": role,
-                "allowed_apps": ["clientes", "incidentes"] if role == "editor" else ["clientes"],
+                "allowed_apps": ["clientes", "incidentes", "reclamaciones"] if role == "editor" else ["clientes", "reclamaciones"],
                 "password_hash": hash_password(pw),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
+
+    # Grant existing non-admin users access to new "reclamaciones" app (idempotent)
+    await db.users.update_many(
+        {"role": {"$in": ["editor", "user"]}, "allowed_apps": {"$ne": "reclamaciones"}},
+        {"$push": {"allowed_apps": "reclamaciones"}},
+    )
+    # Ensure admins have all apps in allowed_apps (for consistency)
+    all_app_ids = [a["id"] for a in APPS]
+    await db.users.update_many(
+        {"role": "admin"},
+        {"$set": {"allowed_apps": all_app_ids}},
+    )
 
 
 @app.on_event("shutdown")
