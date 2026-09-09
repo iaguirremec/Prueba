@@ -31,7 +31,7 @@ export default function AppFormPage() {
         const { data } = await api.get(`/apps/${appId}`);
         setAppDef(data);
         const init = {};
-        for (const f of data.fields) init[f.name] = "";
+        for (const f of data.fields) if (!f.auto) init[f.name] = "";
         setValues(init);
       } catch (e) {
         toast.error(formatApiError(e));
@@ -64,7 +64,7 @@ export default function AppFormPage() {
       await api.post(`/apps/${appId}/submissions`, { data: values });
       toast.success("Registro guardado correctamente");
       const init = {};
-      for (const f of appDef.fields) init[f.name] = "";
+      for (const f of appDef.fields) if (!f.auto) init[f.name] = "";
       setValues(init);
       loadSubmissions();
     } catch (err) {
@@ -114,7 +114,7 @@ export default function AppFormPage() {
             className="max-w-2xl rounded-md border border-border bg-card p-6 sm:p-8 space-y-5"
             data-testid="app-form"
           >
-            {appDef.fields.map((f) => (
+            {appDef.fields.filter((f) => !f.auto).map((f) => (
               <FieldRenderer
                 key={f.name}
                 field={f}
@@ -122,6 +122,14 @@ export default function AppFormPage() {
                 onChange={(v) => setValues((s) => ({ ...s, [f.name]: v }))}
               />
             ))}
+            {appDef.fields.some((f) => f.auto) && (
+              <div className="text-xs text-muted-foreground border border-dashed border-border rounded-md px-3 py-2 bg-muted/30">
+                Los siguientes campos se generan automáticamente:{" "}
+                <span className="font-medium text-foreground">
+                  {appDef.fields.filter((f) => f.auto).map((f) => f.label).join(", ")}
+                </span>
+              </div>
+            )}
             <div className="pt-2">
               <Button
                 type="submit"

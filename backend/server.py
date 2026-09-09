@@ -101,7 +101,7 @@ APPS: List[Dict[str, Any]] = [
         "icon": "ChatCircleDots",
         "accent": "rose",
         "fields": [
-            {"name": "numero", "label": "Número de Reclamación", "type": "text", "required": True},
+            {"name": "numero", "label": "Número de Reclamación", "type": "number", "required": False, "auto": True},
             {"name": "reclamante", "label": "Nombre del Reclamante", "type": "text", "required": True},
             {"name": "email", "label": "Email de Contacto", "type": "email", "required": True},
             {"name": "fecha_incidente", "label": "Fecha del Incidente", "type": "date", "required": True},
@@ -278,8 +278,10 @@ async def submit_form(
         raise HTTPException(status_code=403, detail="Sin acceso a esta aplicación")
 
     app_def = APPS_BY_ID[app_id]
-    # Validate required fields
+    # Validate required fields (skip auto-generated ones)
     for f in app_def["fields"]:
+        if f.get("auto"):
+            continue
         if f.get("required"):
             v = payload.data.get(f["name"])
             if v is None or (isinstance(v, str) and not v.strip()):
@@ -287,13 +289,27 @@ async def submit_form(
                     status_code=400, detail=f"El campo '{f['label']}' es obligatorio"
                 )
 
+    # Auto-generate values for fields marked as auto (atomic counter per app+field)
+    data = dict(payload.data)
+    for f in app_def["fields"]:
+        if not f.get("auto"):
+            continue
+        counter_key = f"{app_id}:{f['name']}"
+        counter = await db.counters.find_one_and_update(
+            {"_id": counter_key},
+            {"$inc": {"seq": 1}},
+            upsert=True,
+            return_document=True,
+        )
+        data[f["name"]] = counter["seq"]
+
     doc = {
         "id": str(uuid.uuid4()),
         "app_id": app_id,
         "user_id": user["id"],
         "user_email": user["email"],
         "user_name": user.get("name", ""),
-        "data": payload.data,
+        "data": data,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.submissions.insert_one(doc)
