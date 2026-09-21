@@ -1,0 +1,13 @@
+# Ignorar dependencias, builds y archivos de configuración local
+**/node_modules
+**/build
+**/.git
+**/.env
+**/.env.local
+**/__pycache__
+**/*.pyc
+**/venv
+**/.venv
+**/.DS_Store
+**/npm-debug.log
+**/yarn-error.log
