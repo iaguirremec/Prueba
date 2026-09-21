@@ -11,25 +11,42 @@ import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
+from urllib.parse import quote_plus
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
+
+from sqlalchemy import (
+    Column, String, DateTime, Integer, ForeignKey, select, update, delete, func,
+)
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase
 
 
 # ---------- Config ----------
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+PG_HOST = os.environ["PG_HOST"]
+PG_PORT = os.environ.get("PG_PORT", "5432")
+PG_USER = os.environ["PG_USER"]
+PG_PASSWORD = os.environ["PG_PASSWORD"]
+PG_DB = os.environ["PG_DB"]
+
+DATABASE_URL = (
+    f"postgresql+asyncpg://{quote_plus(PG_USER)}:{quote_plus(PG_PASSWORD)}"
+    f"@{PG_HOST}:{PG_PORT}/{PG_DB}"
+)
+
+engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_TTL_MIN = 60 * 24  # 24h for simplicity
+ACCESS_TOKEN_TTL_MIN = 60 * 24
 
 
-# ---------- Predefined Apps (data-entry forms) ----------
+# ---------- Predefined Apps ----------
 APPS: List[Dict[str, Any]] = [
     {
         "id": "clientes",
@@ -118,6 +135,39 @@ APPS: List[Dict[str, Any]] = [
 APPS_BY_ID = {a["id"]: a for a in APPS}
 
 
+# ---------- ORM Models ----------
+class Base(DeclarativeBase):
+    pass
+
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False, default="")
+    role = Column(String, nullable=False, default="user")
+    allowed_apps = Column(ARRAY(String), nullable=False, default=list)
+    password_hash = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class Submission(Base):
+    __tablename__ = "submissions"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    app_id = Column(String, nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_email = Column(String, nullable=False)
+    user_name = Column(String, nullable=False, default="")
+    data = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class Counter(Base):
+    __tablename__ = "counters"
+    key = Column(String, primary_key=True)
+    seq = Column(Integer, nullable=False, default=0)
+
+
 # ---------- Helpers ----------
 def hash_password(pw: str) -> str:
     return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -142,15 +192,32 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def public_user(u: Dict[str, Any]) -> Dict[str, Any]:
+def user_to_public(u: User) -> Dict[str, Any]:
     return {
-        "id": u["id"],
-        "email": u["email"],
-        "name": u.get("name", ""),
-        "role": u.get("role", "user"),
-        "allowed_apps": u.get("allowed_apps", []),
-        "created_at": u.get("created_at"),
+        "id": u.id,
+        "email": u.email,
+        "name": u.name,
+        "role": u.role,
+        "allowed_apps": list(u.allowed_apps or []),
+        "created_at": u.created_at.isoformat() if u.created_at else None,
     }
+
+
+def submission_to_dict(s: Submission) -> Dict[str, Any]:
+    return {
+        "id": s.id,
+        "app_id": s.app_id,
+        "user_id": s.user_id,
+        "user_email": s.user_email,
+        "user_name": s.user_name,
+        "data": s.data,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+    }
+
+
+async def get_session() -> AsyncSession:
+    async with SessionLocal() as session:
+        yield session
 
 
 security = HTTPBearer(auto_error=False)
@@ -159,10 +226,9 @@ security = HTTPBearer(auto_error=False)
 async def get_current_user(
     request: Request,
     creds: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> Dict[str, Any]:
-    token = None
-    if creds and creds.credentials:
-        token = creds.credentials
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    token = creds.credentials if (creds and creds.credentials) else None
     if not token:
         raise HTTPException(status_code=401, detail="No autenticado")
     try:
@@ -174,15 +240,15 @@ async def get_current_user(
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
-    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+    user = (await session.execute(select(User).where(User.id == payload["sub"]))).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="Usuario no encontrado")
     return user
 
 
 def require_role(*roles: str):
-    async def _dep(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-        if user.get("role") not in roles:
+    async def _dep(user: User = Depends(get_current_user)) -> User:
+        if user.role not in roles:
             raise HTTPException(status_code=403, detail="Permiso denegado")
         return user
     return _dep
@@ -213,72 +279,89 @@ class SubmissionIn(BaseModel):
     data: Dict[str, Any]
 
 
-# ---------- App & Router ----------
+# ---------- FastAPI ----------
 app = FastAPI()
 api = APIRouter(prefix="/api")
 
 
 @api.get("/")
 async def root():
-    return {"message": "Portal API"}
+    return {"message": "Portal API", "db": "postgresql"}
 
 
 # ----- Auth -----
 @api.post("/auth/login")
-async def login(payload: LoginIn):
+async def login(payload: LoginIn, session: AsyncSession = Depends(get_session)):
     email = payload.email.lower().strip()
-    user = await db.users.find_one({"email": email}, {"_id": 0})
-    if not user or not verify_password(payload.password, user["password_hash"]):
+    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    token = create_access_token(user["id"], user["email"], user["role"])
-    return {"token": token, "user": public_user(user)}
+    token = create_access_token(user.id, user.email, user.role)
+    return {"token": token, "user": user_to_public(user)}
 
 
 @api.get("/auth/me")
-async def me(user: Dict[str, Any] = Depends(get_current_user)):
-    return public_user(user)
+async def me(user: User = Depends(get_current_user)):
+    return user_to_public(user)
 
 
 @api.post("/auth/logout")
-async def logout(user: Dict[str, Any] = Depends(get_current_user)):
-    # Stateless JWT — frontend just discards token.
+async def logout(user: User = Depends(get_current_user)):
     return {"ok": True}
 
 
 # ----- Apps -----
 @api.get("/apps")
-async def list_apps(user: Dict[str, Any] = Depends(get_current_user)):
-    allowed = user.get("allowed_apps", [])
-    role = user.get("role", "user")
+async def list_apps(user: User = Depends(get_current_user)):
+    allowed = list(user.allowed_apps or [])
     result = []
     for a in APPS:
-        if role == "admin" or a["id"] in allowed:
+        if user.role == "admin" or a["id"] in allowed:
             result.append({k: v for k, v in a.items() if k != "fields"})
     return result
 
 
 @api.get("/apps/{app_id}")
-async def get_app(app_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+async def get_app(app_id: str, user: User = Depends(get_current_user)):
     if app_id not in APPS_BY_ID:
         raise HTTPException(status_code=404, detail="Aplicación no encontrada")
-    if user.get("role") != "admin" and app_id not in user.get("allowed_apps", []):
+    if user.role != "admin" and app_id not in list(user.allowed_apps or []):
         raise HTTPException(status_code=403, detail="Sin acceso a esta aplicación")
     return APPS_BY_ID[app_id]
+
+
+async def next_counter(session: AsyncSession, key: str) -> int:
+    """Atomic increment; INSERT if missing."""
+    # Try update first
+    stmt = (
+        update(Counter)
+        .where(Counter.key == key)
+        .values(seq=Counter.seq + 1)
+        .returning(Counter.seq)
+    )
+    res = await session.execute(stmt)
+    val = res.scalar_one_or_none()
+    if val is not None:
+        return val
+    # Row missing → insert seq=1
+    session.add(Counter(key=key, seq=1))
+    await session.flush()
+    return 1
 
 
 @api.post("/apps/{app_id}/submissions")
 async def submit_form(
     app_id: str,
     payload: SubmissionIn,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
 ):
     if app_id not in APPS_BY_ID:
         raise HTTPException(status_code=404, detail="Aplicación no encontrada")
-    if user.get("role") != "admin" and app_id not in user.get("allowed_apps", []):
+    if user.role != "admin" and app_id not in list(user.allowed_apps or []):
         raise HTTPException(status_code=403, detail="Sin acceso a esta aplicación")
 
     app_def = APPS_BY_ID[app_id]
-    # Validate required fields (skip auto-generated ones)
     for f in app_def["fields"]:
         if f.get("auto"):
             continue
@@ -289,127 +372,129 @@ async def submit_form(
                     status_code=400, detail=f"El campo '{f['label']}' es obligatorio"
                 )
 
-    # Auto-generate values for fields marked as auto (atomic counter per app+field)
     data = dict(payload.data)
     for f in app_def["fields"]:
-        if not f.get("auto"):
-            continue
-        counter_key = f"{app_id}:{f['name']}"
-        counter = await db.counters.find_one_and_update(
-            {"_id": counter_key},
-            {"$inc": {"seq": 1}},
-            upsert=True,
-            return_document=True,
-        )
-        data[f["name"]] = counter["seq"]
+        if f.get("auto"):
+            data[f["name"]] = await next_counter(session, f"{app_id}:{f['name']}")
 
-    doc = {
-        "id": str(uuid.uuid4()),
-        "app_id": app_id,
-        "user_id": user["id"],
-        "user_email": user["email"],
-        "user_name": user.get("name", ""),
-        "data": data,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.submissions.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    sub = Submission(
+        id=str(uuid.uuid4()),
+        app_id=app_id,
+        user_id=user.id,
+        user_email=user.email,
+        user_name=user.name or "",
+        data=data,
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(sub)
+    await session.commit()
+    await session.refresh(sub)
+    return submission_to_dict(sub)
 
 
 @api.get("/apps/{app_id}/submissions")
 async def list_submissions(
     app_id: str,
-    user: Dict[str, Any] = Depends(get_current_user),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
 ):
     if app_id not in APPS_BY_ID:
         raise HTTPException(status_code=404, detail="Aplicación no encontrada")
-    if user.get("role") != "admin" and app_id not in user.get("allowed_apps", []):
+    if user.role != "admin" and app_id not in list(user.allowed_apps or []):
         raise HTTPException(status_code=403, detail="Sin acceso a esta aplicación")
 
-    query: Dict[str, Any] = {"app_id": app_id}
-    if user.get("role") == "user":
-        query["user_id"] = user["id"]
-
-    cursor = db.submissions.find(query, {"_id": 0}).sort("created_at", -1).limit(500)
-    return await cursor.to_list(500)
+    q = select(Submission).where(Submission.app_id == app_id)
+    if user.role == "user":
+        q = q.where(Submission.user_id == user.id)
+    q = q.order_by(Submission.created_at.desc()).limit(500)
+    subs = (await session.execute(q)).scalars().all()
+    return [submission_to_dict(s) for s in subs]
 
 
 # ----- Admin: Users -----
 @api.get("/admin/users")
-async def admin_list_users(_: Dict[str, Any] = Depends(require_role("admin"))):
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
-    return users
+async def admin_list_users(
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+):
+    users = (
+        await session.execute(select(User).order_by(User.created_at.desc()))
+    ).scalars().all()
+    return [user_to_public(u) for u in users]
 
 
 @api.post("/admin/users")
 async def admin_create_user(
     payload: UserCreateIn,
-    _: Dict[str, Any] = Depends(require_role("admin")),
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
 ):
     email = payload.email.lower().strip()
-    existing = await db.users.find_one({"email": email})
+    existing = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=400, detail="El email ya está registrado")
-    # Validate allowed_apps
     bad = [a for a in payload.allowed_apps if a not in APPS_BY_ID]
     if bad:
         raise HTTPException(status_code=400, detail=f"Apps inválidas: {bad}")
-    doc = {
-        "id": str(uuid.uuid4()),
-        "email": email,
-        "name": payload.name.strip(),
-        "role": payload.role,
-        "allowed_apps": payload.allowed_apps,
-        "password_hash": hash_password(payload.password),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.users.insert_one(doc)
-    return public_user(doc)
+    u = User(
+        id=str(uuid.uuid4()),
+        email=email,
+        name=payload.name.strip(),
+        role=payload.role,
+        allowed_apps=payload.allowed_apps,
+        password_hash=hash_password(payload.password),
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(u)
+    await session.commit()
+    await session.refresh(u)
+    return user_to_public(u)
 
 
 @api.patch("/admin/users/{user_id}")
 async def admin_update_user(
     user_id: str,
     payload: UserUpdateIn,
-    _: Dict[str, Any] = Depends(require_role("admin")),
+    _: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
 ):
-    user = await db.users.find_one({"id": user_id}, {"_id": 0})
-    if not user:
+    u = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not u:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    updates: Dict[str, Any] = {}
     if payload.name is not None:
-        updates["name"] = payload.name.strip()
+        u.name = payload.name.strip()
     if payload.role is not None:
-        updates["role"] = payload.role
+        u.role = payload.role
     if payload.allowed_apps is not None:
         bad = [a for a in payload.allowed_apps if a not in APPS_BY_ID]
         if bad:
             raise HTTPException(status_code=400, detail=f"Apps inválidas: {bad}")
-        updates["allowed_apps"] = payload.allowed_apps
+        u.allowed_apps = payload.allowed_apps
     if payload.password:
-        updates["password_hash"] = hash_password(payload.password)
-    if updates:
-        await db.users.update_one({"id": user_id}, {"$set": updates})
-    user = await db.users.find_one({"id": user_id}, {"_id": 0})
-    return public_user(user)
+        u.password_hash = hash_password(payload.password)
+    await session.commit()
+    await session.refresh(u)
+    return user_to_public(u)
 
 
 @api.delete("/admin/users/{user_id}")
 async def admin_delete_user(
     user_id: str,
-    current: Dict[str, Any] = Depends(require_role("admin")),
+    current: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
 ):
-    if user_id == current["id"]:
+    if user_id == current.id:
         raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta")
-    res = await db.users.delete_one({"id": user_id})
-    if res.deleted_count == 0:
+    u = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not u:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    await session.execute(delete(User).where(User.id == user_id))
+    await session.commit()
     return {"ok": True}
 
 
 @api.get("/admin/apps")
-async def admin_list_all_apps(_: Dict[str, Any] = Depends(require_role("admin"))):
+async def admin_list_all_apps(_: User = Depends(require_role("admin"))):
     return [{k: v for k, v in a.items() if k != "fields"} for a in APPS]
 
 
@@ -430,60 +515,57 @@ logger = logging.getLogger(__name__)
 
 @app.on_event("startup")
 async def on_startup():
-    await db.users.create_index("email", unique=True)
-    await db.users.create_index("id", unique=True)
-    await db.submissions.create_index("app_id")
-    await db.submissions.create_index("user_id")
+    # Create tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
-    admin_email = os.environ["ADMIN_EMAIL"].lower().strip()
-    admin_password = os.environ["ADMIN_PASSWORD"]
-    existing = await db.users.find_one({"email": admin_email})
-    if not existing:
-        await db.users.insert_one({
-            "id": str(uuid.uuid4()),
-            "email": admin_email,
-            "name": "Administrador",
-            "role": "admin",
-            "allowed_apps": [a["id"] for a in APPS],
-            "password_hash": hash_password(admin_password),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        })
-        logger.info(f"Admin sembrado: {admin_email}")
-    elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one(
-            {"email": admin_email},
-            {"$set": {"password_hash": hash_password(admin_password)}},
-        )
+    # Seed users
+    async with SessionLocal() as session:
+        admin_email = os.environ["ADMIN_EMAIL"].lower().strip()
+        admin_password = os.environ["ADMIN_PASSWORD"]
+        all_app_ids = [a["id"] for a in APPS]
 
-    # Seed sample editor + user for convenience if not present
-    for email, name, role, pw in [
-        ("editor@portal.com", "Editor Demo", "editor", "editor123"),
-        ("user@portal.com", "Usuario Demo", "user", "user123"),
-    ]:
-        if not await db.users.find_one({"email": email}):
-            await db.users.insert_one({
-                "id": str(uuid.uuid4()),
-                "email": email,
-                "name": name,
-                "role": role,
-                "allowed_apps": ["clientes", "incidentes", "reclamaciones"] if role == "editor" else ["clientes", "reclamaciones"],
-                "password_hash": hash_password(pw),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            })
+        existing = (
+            await session.execute(select(User).where(User.email == admin_email))
+        ).scalar_one_or_none()
+        if not existing:
+            session.add(User(
+                id=str(uuid.uuid4()),
+                email=admin_email,
+                name="Administrador",
+                role="admin",
+                allowed_apps=all_app_ids,
+                password_hash=hash_password(admin_password),
+                created_at=datetime.now(timezone.utc),
+            ))
+            logger.info(f"Admin sembrado: {admin_email}")
+        elif not verify_password(admin_password, existing.password_hash):
+            existing.password_hash = hash_password(admin_password)
 
-    # Grant existing non-admin users access to new "reclamaciones" app (idempotent)
-    await db.users.update_many(
-        {"role": {"$in": ["editor", "user"]}, "allowed_apps": {"$ne": "reclamaciones"}},
-        {"$push": {"allowed_apps": "reclamaciones"}},
-    )
-    # Ensure admins have all apps in allowed_apps (for consistency)
-    all_app_ids = [a["id"] for a in APPS]
-    await db.users.update_many(
-        {"role": "admin"},
-        {"$set": {"allowed_apps": all_app_ids}},
-    )
+        for email, name, role, pw, apps in [
+            ("editor@portal.com", "Editor Demo", "editor", "editor123", ["clientes", "incidentes", "reclamaciones"]),
+            ("user@portal.com", "Usuario Demo", "user", "user123", ["clientes", "reclamaciones"]),
+        ]:
+            found = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+            if not found:
+                session.add(User(
+                    id=str(uuid.uuid4()),
+                    email=email,
+                    name=name,
+                    role=role,
+                    allowed_apps=apps,
+                    password_hash=hash_password(pw),
+                    created_at=datetime.now(timezone.utc),
+                ))
+
+        # Ensure all admins have all apps
+        admins = (await session.execute(select(User).where(User.role == "admin"))).scalars().all()
+        for a in admins:
+            a.allowed_apps = all_app_ids
+
+        await session.commit()
 
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+async def on_shutdown():
+    await engine.dispose()
