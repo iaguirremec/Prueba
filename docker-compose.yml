@@ -4,9 +4,9 @@ services:
     container_name: portal-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${PG_USER}
-      POSTGRES_PASSWORD: ${PG_PASSWORD}
-      POSTGRES_DB: ${PG_DB}
+      POSTGRES_USER: ${PG_USER:?PG_USER es obligatorio - revisa que exista .env con las variables}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD es obligatorio - revisa .env}
+      POSTGRES_DB: ${PG_DB:?PG_DB es obligatorio - revisa .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -28,13 +28,13 @@ services:
     environment:
       PG_HOST: postgres
       PG_PORT: 5432
-      PG_USER: ${PG_USER}
-      PG_PASSWORD: ${PG_PASSWORD}
-      PG_DB: ${PG_DB}
-      JWT_SECRET: ${JWT_SECRET}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      CORS_ORIGINS: ${CORS_ORIGINS}
+      PG_USER: ${PG_USER:?}
+      PG_PASSWORD: ${PG_PASSWORD:?}
+      PG_DB: ${PG_DB:?}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET es obligatorio - genera uno con: openssl rand -hex 32}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL es obligatorio}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD es obligatorio}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
       # Legacy vars (unused, kept for compatibility)
       MONGO_URL: "mongodb://unused"
       DB_NAME: "unused"
@@ -46,7 +46,7 @@ services:
     build:
       context: ./frontend
       args:
-        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL}
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:?REACT_APP_BACKEND_URL es obligatorio - URL publica desde el navegador}
     container_name: portal-frontend
     restart: unless-stopped
     depends_on:
