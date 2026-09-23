@@ -7,8 +7,11 @@ WORKDIR /app
 ARG REACT_APP_BACKEND_URL
 ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
 
-COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+# Copy package manifests (yarn.lock is optional — pattern uses wildcard so
+# the build works whether or not it was committed to the repo)
+COPY package.json ./
+COPY yarn.lock* ./
+RUN yarn install --network-timeout 600000
 
 COPY . .
 RUN yarn build
